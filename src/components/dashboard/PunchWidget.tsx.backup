@@ -1,0 +1,403 @@
+'use client';
+
+import React, { useState, useEffect } from 'react';
+import { performPunch, type AttendanceState } from '../../app/actions/attendance';
+
+interface PunchWidgetProps {
+    userId: string;
+    initialState: AttendanceState;
+    date?: Date;
+}
+
+export default function PunchWidget({ userId, initialState, date }: PunchWidgetProps) {
+    const [state, setState] = useState<AttendanceState>(initialState);
+    const [loading, setLoading] = useState(false);
+    const [currentTime, setCurrentTime] = useState(date || new Date());
+    const [elapsedTime, setElapsedTime] = useState<string>('00:00:00');
+
+    // Helper for formatting duration from seconds
+    const formatDuration = (totalSeconds: number) => {
+        if (!totalSeconds) return '0s';
+        const h = Math.floor(totalSeconds / 3600);
+        const m = Math.floor((totalSeconds % 3600) / 60);
+        const s = totalSeconds % 60;
+
+        const parts = [];
+        if (h > 0) parts.push(`${h}h`);
+        if (m > 0 || h > 0) parts.push(`${m}m`);
+        parts.push(`${s}s`);
+
+        return parts.join(' ');
+    };
+
+    // Helper for padding numbers
+    const pad = (n: number) => n.toString().padStart(2, '0');
+
+    // Timer Logic
+    useEffect(() => {
+        let interval: NodeJS.Timeout;
+
+        const updateTimer = () => {
+            // 1. Update Current Time
+            let simulatedNow = new Date();
+            if (date) {
+                const now = new Date();
+                const target = new Date(date);
+                target.setHours(now.getHours(), now.getMinutes(), now.getSeconds());
+                setCurrentTime(target);
+                simulatedNow = target;
+            } else {
+                setCurrentTime(new Date());
+            }
+
+            // 2. Update Work Timer Display
+            let start: Date | null = null;
+            let offsetSeconds = 0;
+
+            if (state.status === 'PUNCHED_IN' && state.punchIn) {
+                start = new Date(state.punchIn);
+                offsetSeconds = state.totalBreakSeconds;
+            } else if (state.status === 'ON_BREAK' && state.breakStartTime) {
+                start = new Date(state.breakStartTime);
+            }
+
+            if (!start) {
+                setElapsedTime('00:00:00');
+                return;
+            }
+
+            let diffMs = simulatedNow.getTime() - start.getTime();
+
+            if (state.status === 'PUNCHED_IN') {
+                diffMs = diffMs - (offsetSeconds * 1000);
+            }
+
+            if (diffMs < 0) diffMs = 0;
+
+            const hours = Math.floor(diffMs / 1000 / 60 / 60);
+            const minutes = Math.floor((diffMs / 1000 / 60) % 60);
+            const seconds = Math.floor((diffMs / 1000) % 60);
+
+            setElapsedTime(`${pad(hours)}:${pad(minutes)}:${pad(seconds)}`);
+        };
+
+        updateTimer();
+        interval = setInterval(updateTimer, 1000);
+
+        return () => clearInterval(interval);
+    }, [state, date]);
+
+    // Helper for Real Time display
+    const timeString = currentTime.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const amPm = timeString.split(' ')[1];
+    const timeOnly = timeString.split(' ')[0];
+
+    // State for constraints
+    const [canLunch, setCanLunch] = useState(false);
+    const [canTea, setCanTea] = useState(false);
+    const [canPunchOut, setCanPunchOut] = useState(false);
+
+    // Update constraints every second
+    useEffect(() => {
+        const checkConstraints = () => {
+            const now = currentTime;
+            const hours = now.getHours();
+
+            setCanLunch(hours >= 12);
+            setCanTea(hours >= 17);
+
+            if (state.punchIn) {
+                setCanPunchOut(true);
+            }
+        };
+
+        checkConstraints();
+        const interval = setInterval(checkConstraints, 1000);
+        return () => clearInterval(interval);
+    }, [currentTime, state.punchIn]);
+
+    // Helper for formatting timestamps
+    const formatTime = (dateStr?: Date | null) => {
+        if (!dateStr) return '--:--:--';
+        return new Date(dateStr).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true });
+    };
+
+    const handlePunch = async (action: 'IN' | 'OUT' | 'START_BREAK' | 'END_BREAK', type?: 'LUNCH' | 'TEA') => {
+        if (loading) return;
+        if (action === 'OUT' && !canPunchOut) return;
+
+        setLoading(true);
+        try {
+            const result = await performPunch(userId, action, date, type);
+            if (result.success && result.updatedState) {
+                setState(result.updatedState);
+            } else if (result.error) {
+                console.error("Punch Error:", result.error);
+            }
+        } catch (e) {
+            console.warn("Punch failed", e);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    if (state.status === 'PUNCHED_OUT') {
+        const h = Math.floor(state.totalWorkSeconds / 3600);
+        const m = Math.floor((state.totalWorkSeconds % 3600) / 60);
+        const s = state.totalWorkSeconds % 60;
+
+        return (
+            <div className="bg-gradient-to-br from-green-50 to-emerald-50 dark:from-green-900/20 dark:to-emerald-900/10 rounded-2xl p-8 flex flex-col items-center justify-center gap-6 border border-green-200 dark:border-green-800/30 shadow-lg relative overflow-hidden">
+                {/* Background decoration */}
+                <div className="absolute top-0 right-0 w-64 h-64 bg-green-400/10 rounded-full blur-3xl"></div>
+                <div className="absolute bottom-0 left-0 w-48 h-48 bg-emerald-400/10 rounded-full blur-3xl"></div>
+
+                {/* Header */}
+                <div className="flex items-center gap-3 z-10">
+                    <div className="p-3 rounded-full bg-green-100 dark:bg-green-800/30">
+                        <span className="material-symbols-outlined text-3xl text-green-600 dark:text-green-400">task_alt</span>
+                    </div>
+                    <h3 className="text-2xl font-bold text-green-700 dark:text-green-300">Day Completed</h3>
+                </div>
+
+                {/* Enhanced Cards Grid */}
+                <div className="grid grid-cols-5 gap-4 w-full max-w-5xl z-10">
+                    {/* Punch In Card */}
+                    <div className="bg-white dark:bg-slate-800/50 rounded-xl p-4 border border-green-200 dark:border-green-800/30 shadow-sm hover:shadow-md transition-all">
+                        <div className="flex flex-col items-center gap-2">
+                            <div className="p-2 rounded-lg bg-green-100 dark:bg-green-900/30">
+                                <span className="material-symbols-outlined text-green-600 dark:text-green-400 text-xl">login</span>
+                            </div>
+                            <div className="text-center">
+                                <div className="text-[10px] text-green-600 dark:text-green-400 uppercase font-bold tracking-wider">Punch In</div>
+                                <div className="font-mono font-bold text-base text-slate-700 dark:text-slate-200 mt-1">{formatTime(state.punchIn)}</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Lunch Card */}
+                    <div className="bg-white dark:bg-slate-800/50 rounded-xl p-4 border border-amber-200 dark:border-amber-800/30 shadow-sm hover:shadow-md transition-all">
+                        <div className="flex flex-col items-center gap-2">
+                            <div className="p-2 rounded-lg bg-amber-100 dark:bg-amber-900/30">
+                                <span className="material-symbols-outlined text-amber-600 dark:text-amber-400 text-xl">restaurant</span>
+                            </div>
+                            <div className="text-center">
+                                <div className="text-[10px] text-amber-600 dark:text-amber-400 uppercase font-bold tracking-wider">Lunch</div>
+                                <div className="font-mono font-bold text-base text-amber-700 dark:text-amber-300 mt-1">{formatDuration(state.totalLunchSeconds)}</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Tea Card */}
+                    <div className="bg-white dark:bg-slate-800/50 rounded-xl p-4 border border-blue-200 dark:border-blue-800/30 shadow-sm hover:shadow-md transition-all">
+                        <div className="flex flex-col items-center gap-2">
+                            <div className="p-2 rounded-lg bg-blue-100 dark:bg-blue-900/30">
+                                <span className="material-symbols-outlined text-blue-600 dark:text-blue-400 text-xl">local_cafe</span>
+                            </div>
+                            <div className="text-center">
+                                <div className="text-[10px] text-blue-600 dark:text-blue-400 uppercase font-bold tracking-wider">Tea</div>
+                                <div className="font-mono font-bold text-base text-blue-700 dark:text-blue-300 mt-1">{formatDuration(state.totalTeaSeconds)}</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Punch Out Card */}
+                    <div className="bg-white dark:bg-slate-800/50 rounded-xl p-4 border border-red-200 dark:border-red-800/30 shadow-sm hover:shadow-md transition-all">
+                        <div className="flex flex-col items-center gap-2">
+                            <div className="p-2 rounded-lg bg-red-100 dark:bg-red-900/30">
+                                <span className="material-symbols-outlined text-red-600 dark:text-red-400 text-xl">logout</span>
+                            </div>
+                            <div className="text-center">
+                                <div className="text-[10px] text-red-600 dark:text-red-400 uppercase font-bold tracking-wider">Punch Out</div>
+                                <div className="font-mono font-bold text-base text-slate-700 dark:text-slate-200 mt-1">{formatTime(state.punchOut)}</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Total Work Card - Highlighted */}
+                    <div className="bg-gradient-to-br from-employee-primary to-employee-primary-hover rounded-xl p-4 border border-employee-primary shadow-md hover:shadow-lg transition-all">
+                        <div className="flex flex-col items-center gap-2">
+                            <div className="p-2 rounded-lg bg-white/20">
+                                <span className="material-symbols-outlined text-white text-xl">timelapse</span>
+                            </div>
+                            <div className="text-center">
+                                <div className="text-[10px] text-white/90 uppercase font-bold tracking-wider">Total Work</div>
+                                <div className="font-mono font-bold text-base text-white mt-1">{pad(h)}h {pad(m)}m {pad(s)}s</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    return (
+        <div className="bg-employee-surface-light dark:bg-employee-surface-dark rounded-xl p-6 md:p-8 border border-employee-border-light dark:border-employee-border-dark shadow-sm flex flex-col md:flex-row items-center justify-between gap-6 relative overflow-hidden group min-h-[240px]">
+            <div className="absolute top-0 right-0 w-64 h-64 bg-employee-primary/5 rounded-full -translate-y-1/2 translate-x-1/3 blur-3xl group-hover:bg-employee-primary/10 transition-all duration-700"></div>
+
+            {/* Info Section */}
+            <div className={`flex flex-col gap-2 z-10 transition-all duration-500 ${state.status !== 'NOT_PUNCHED' ? 'md:w-1/2' : 'w-full md:w-auto'}`}>
+                <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400 text-sm font-medium mb-1">
+                    <span className="material-symbols-outlined text-[18px]">schedule</span>
+                    <span>Time & Timer</span>
+                </div>
+
+                {/* Real Time Clock */}
+                <div className="flex items-baseline gap-2 font-mono text-3xl font-bold text-slate-900 dark:text-white tracking-tighter tabular-nums">
+                    {timeOnly}
+                    <span className="text-base text-slate-500 dark:text-slate-400 font-semibold">{amPm}</span>
+                </div>
+
+                {/* Work Timer */}
+                {state.status === 'NOT_PUNCHED' ? (
+                    <div className="flex items-baseline gap-2 font-mono text-xl sm:text-2xl font-bold text-slate-400 dark:text-slate-500 tracking-tighter opacity-80">
+                        --:--:--
+                    </div>
+                ) : (
+                    <div className={`flex items-baseline gap-2 font-mono text-xl sm:text-2xl font-bold tracking-tighter tabular-nums ${state.status === 'ON_BREAK' ? 'text-amber-500' : 'text-employee-primary'}`}>
+                        {elapsedTime}
+                    </div>
+                )}
+
+                {/* Status Badges & Times */}
+                <div className="flex flex-col gap-2 mt-2">
+                    <div className="flex flex-wrap gap-2">
+                        {state.status === 'NOT_PUNCHED' && (
+                            <div className="text-xs font-medium px-2.5 py-1 rounded-full w-fit flex items-center gap-1.5 bg-slate-100 dark:bg-slate-800 text-slate-500">
+                                <span className="size-2 rounded-full bg-slate-400"></span>Not Punched In
+                            </div>
+                        )}
+                        {state.status !== 'NOT_PUNCHED' && (
+                            <>
+                                <div className="text-xs font-medium px-2.5 py-1 rounded-full w-fit flex items-center gap-1.5 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 border border-green-200 dark:border-green-800/50">
+                                    <span className="material-symbols-outlined text-[14px]">login</span>
+                                    In: {formatTime(state.punchIn)}
+                                </div>
+                                {state.status === 'ON_BREAK' && (
+                                    <div className="text-xs font-medium px-2.5 py-1 rounded-full w-fit flex items-center gap-1.5 bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800/50 animate-pulse">
+                                        <span className="size-2 rounded-full bg-amber-500"></span> On {state.breakType === 'LUNCH' ? 'Lunch' : 'Tea'} Break
+                                    </div>
+                                )}
+                                {state.breakStartTime && (
+                                    <div className="text-xs font-medium px-2.5 py-1 rounded-full w-fit flex items-center gap-1.5 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400">
+                                        Start: {formatTime(state.breakStartTime)}
+                                    </div>
+                                )}
+                            </>
+                        )}
+                    </div>
+                    {/* Display Total Break Times */}
+                    {state.status !== 'NOT_PUNCHED' && (
+                        <div className="flex gap-3 text-[10px] text-slate-500 dark:text-slate-400 font-medium ml-1">
+                            <span>Lunch: {formatDuration(state.totalLunchSeconds)}</span>
+                            <span>Tea: {formatDuration(state.totalTeaSeconds)}</span>
+                        </div>
+                    )}
+                </div>
+            </div>
+
+            {/* Action Buttons Section */}
+            <div className="z-10 flex gap-4 items-center justify-end flex-1 w-full md:w-auto">
+                {state.status === 'NOT_PUNCHED' && (
+                    <button
+                        onClick={() => handlePunch('IN')}
+                        disabled={loading}
+                        className="flex flex-col items-center justify-center size-36 sm:size-40 rounded-full bg-employee-primary hover:bg-employee-primary-hover text-white transition-all shadow-lg hover:shadow-employee-primary/30 hover:scale-105 active:scale-95 group/btn"
+                    >
+                        {loading ? (
+                            <span className="size-8 border-2 border-white/30 border-t-white rounded-full animate-spin mb-1"></span>
+                        ) : (
+                            <span className="material-symbols-outlined text-4xl mb-1 group-hover/btn:scale-110 transition-transform">fingerprint</span>
+                        )}
+                        <span className="text-lg font-bold tracking-tight">Punch In</span>
+                        <span className="text-xs font-normal opacity-80 mt-1">Start your day</span>
+                    </button>
+                )}
+
+                {(state.status === 'PUNCHED_IN' || state.status === 'ON_BREAK') && (
+                    <div className="flex items-center gap-4 animate-in slide-in-from-right-10 fade-in duration-500">
+                        {/* Break Controls */}
+                        <div className="flex flex-col gap-2">
+                            {/* Lunch Button */}
+                            <button
+                                onClick={() => state.status === 'ON_BREAK' && state.breakType === 'LUNCH' ? handlePunch('END_BREAK') : handlePunch('START_BREAK', 'LUNCH')}
+                                disabled={loading || (state.status !== 'ON_BREAK' && (!canLunch || state.totalLunchSeconds > 0)) || (state.status === 'ON_BREAK' && state.breakType !== 'LUNCH')}
+                                className={`flex items-center gap-2 px-4 py-2 rounded-xl border transition-all min-w-[140px]
+                                    ${state.status === 'ON_BREAK' && state.breakType === 'LUNCH'
+                                        ? 'bg-amber-100 text-amber-700 border-amber-200 animate-pulse ring-2 ring-amber-500/50'
+                                        : canLunch && state.status !== 'ON_BREAK' && state.totalLunchSeconds === 0
+                                            ? 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700'
+                                            : 'bg-slate-100 dark:bg-slate-900/50 text-slate-400 border-slate-200 dark:border-slate-800 cursor-not-allowed opacity-60'
+                                    }
+                                `}
+                            >
+                                {loading && state.status === 'ON_BREAK' && state.breakType === 'LUNCH' ? (
+                                    <span className="size-4 border-2 border-current border-t-transparent rounded-full animate-spin"></span>
+                                ) : (
+                                    <span className="material-symbols-outlined text-lg">restaurant</span>
+                                )}
+                                <div className="text-left">
+                                    <span className="block text-xs font-bold">Lunch</span>
+                                    {state.status === 'ON_BREAK' && state.breakType === 'LUNCH' && <span className="block text-[10px] leading-none">End Lunch</span>}
+                                    {state.status !== 'ON_BREAK' && <span className="block text-[10px] leading-none">{state.totalLunchSeconds > 0 ? 'Completed' : (canLunch ? 'Start' : '12:00 PM')}</span>}
+                                </div>
+                            </button>
+
+                            {/* Tea Button */}
+                            <button
+                                onClick={() => state.status === 'ON_BREAK' && state.breakType === 'TEA' ? handlePunch('END_BREAK') : handlePunch('START_BREAK', 'TEA')}
+                                disabled={loading || (state.status !== 'ON_BREAK' && (!canTea || state.totalTeaSeconds > 0)) || (state.status === 'ON_BREAK' && state.breakType !== 'TEA')}
+                                className={`flex items-center gap-2 px-4 py-2 rounded-xl border transition-all min-w-[140px]
+                                    ${state.status === 'ON_BREAK' && state.breakType === 'TEA'
+                                        ? 'bg-amber-100 text-amber-700 border-amber-200 animate-pulse ring-2 ring-amber-500/50'
+                                        : canTea && state.status !== 'ON_BREAK' && state.totalTeaSeconds === 0
+                                            ? 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700'
+                                            : 'bg-slate-100 dark:bg-slate-900/50 text-slate-400 border-slate-200 dark:border-slate-800 cursor-not-allowed opacity-60'
+                                    }
+                                `}
+                            >
+                                {loading && state.status === 'ON_BREAK' && state.breakType === 'TEA' ? (
+                                    <span className="size-4 border-2 border-current border-t-transparent rounded-full animate-spin"></span>
+                                ) : (
+                                    <span className="material-symbols-outlined text-lg">local_cafe</span>
+                                )}
+                                <div className="text-left">
+                                    <span className="block text-xs font-bold">Tea Break</span>
+                                    {state.status === 'ON_BREAK' && state.breakType === 'TEA' && <span className="block text-[10px] leading-none">End Tea</span>}
+                                    {state.status !== 'ON_BREAK' && <span className="block text-[10px] leading-none">{state.totalTeaSeconds > 0 ? 'Completed' : (canTea ? 'Start' : '05:00 PM')}</span>}
+                                </div>
+                            </button>
+                        </div>
+
+                        {/* Punch Out Button */}
+                        <button
+                            onClick={() => handlePunch('OUT')}
+                            disabled={loading || !canPunchOut || state.status === 'ON_BREAK'}
+                            className={`flex flex-col items-center justify-center size-36 sm:size-40 rounded-full transition-all shadow-lg active:scale-95
+                                ${!canPunchOut || state.status === 'ON_BREAK'
+                                    ? 'bg-slate-200 dark:bg-slate-800 text-slate-400 cursor-not-allowed shadow-none'
+                                    : 'bg-red-500 hover:bg-red-600 text-white hover:shadow-red-500/30 hover:scale-105'
+                                }
+                            `}
+                        >
+                            {loading ? (
+                                <span className="size-8 border-2 border-white/30 border-t-white rounded-full animate-spin mb-1"></span>
+                            ) : (
+                                <span className="material-symbols-outlined text-4xl mb-1">logout</span>
+                            )}
+                            <span className="text-lg font-bold tracking-tight">Punch Out</span>
+                            {!canPunchOut ? (
+                                <span className="text-xs font-normal opacity-80 mt-1 flex items-center gap-1">
+                                    <span className="material-symbols-outlined text-[10px]">lock</span>
+                                    Locked
+                                </span>
+                            ) : (
+                                <span className="text-xs font-normal opacity-80 mt-1">End Day</span>
+                            )}
+                        </button>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+}

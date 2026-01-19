@@ -1,0 +1,131 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id        String   @id @default(uuid())
+  name      String
+  email     String   @unique
+  password         String
+  role             String   // 'admin' or 'employee'
+  mustChangePassword Boolean @default(false)
+  
+  // Face Recognition
+  faceDescriptor  Json?     // Store face embedding as JSON array
+  faceEnrolled    Boolean   @default(false)
+  faceEnrolledAt  DateTime?
+  
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  employeeProfile  EmployeeProfile?
+  attendanceRecords Attendance[]
+}
+
+model Attendance {
+  id                String   @id @default(uuid())
+  userId            String
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  date              DateTime // Represents the day of the record (usually set to midnight)
+  
+  punchIn           DateTime?
+  punchOut          DateTime?
+  
+  breakStartTime    DateTime?
+  breakType         String?  // 'LUNCH' or 'TEA'
+  
+  totalBreakSeconds Int      @default(0)
+  totalLunchSeconds Int      @default(0)
+  totalTeaSeconds   Int      @default(0)
+  
+  status            String?  // PRESENT, HALF_DAY, SHORT_DAY, ABSENT
+  totalWorkSeconds  Int      @default(0)
+  
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([userId, date])
+}
+
+model EmployeeProfile {
+  id          String   @id @default(uuid())
+  userId      String   @unique
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  designation String?
+  department  String?
+  phoneNumber String?
+  alternatePhone String?
+  alternateEmail String?
+  address     String?
+  pincode     String?
+  mapLocation String?
+  
+  joiningDate DateTime?
+  dateOfBirth DateTime?
+  
+  profileImage String? // Base64 string
+
+  // Guardian Details
+  guardianName        String?
+  guardianDesignation String?
+  guardianPhone       String?
+  guardianEmail       String?
+  
+  // Relations
+  workExperiences WorkExperience[]
+  educations      Education[]
+  certifications  Certification[]
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model WorkExperience {
+  id                String          @id @default(uuid())
+  employeeProfileId String
+  employeeProfile   EmployeeProfile @relation(fields: [employeeProfileId], references: [id], onDelete: Cascade)
+  
+  company     String
+  role        String
+  description String?
+  startDate   DateTime
+  endDate     DateTime? // Null means currently working
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Education {
+  id                String          @id @default(uuid())
+  employeeProfileId String
+  employeeProfile   EmployeeProfile @relation(fields: [employeeProfileId], references: [id], onDelete: Cascade)
+  
+  level       String // High School, Senior Secondary, Graduation, Masters, PhD, etc.
+  institution String
+  year        String // Passing Year
+  score       String? // Percentage or CGPA
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Certification {
+  id                String          @id @default(uuid())
+  employeeProfileId String
+  employeeProfile   EmployeeProfile @relation(fields: [employeeProfileId], references: [id], onDelete: Cascade)
+  
+  name   String
+  issuer String
+  date   DateTime
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
